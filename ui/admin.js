@@ -7,9 +7,9 @@ export function renderAdminLogin() {
     <div class="min-h-screen flex items-center justify-center bg-black px-4">
         <div class="max-w-md w-full bg-[#0a0a0a] p-8 border border-gray-800">
             <div class="flex justify-center mb-6">
-                <i class="fas fa-bolt text-3xl text-white"></i>
+                <i class="fas fa-lock text-3xl text-white"></i>
             </div>
-            <h2 class="text-xl font-black text-center mb-2 text-white uppercase tracking-widest">Portal Admin</h2>
+            <h2 class="text-xl font-black text-center mb-2 text-white uppercase tracking-widest">Pánel de Administración</h2>
             <p class="text-center text-gray-500 mb-8 text-xs uppercase tracking-wider">Acceso Restringido</p>
             <form onsubmit="loginAdmin(event)" class="space-y-4">
                 <input id="admin_user" required type="text" placeholder="Usuario" class="w-full px-4 py-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
@@ -138,8 +138,21 @@ export function renderAdminProducts() {
                         ${state.categories.filter(c => c !== 'Todas').map(c => `<option value="${c}" ${ep && ep.category === c ? 'selected' : ''}>${c}</option>`).join('')}
                     </select>
                 </div>
-                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Precio (Sin formato)</label><input id="${ep ? 'edit_p_price' : 'new_p_price'}" value="${ep ? ep.price : ''}" required type="number" step="0.01" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Precio Base (Genérico)</label><input id="${ep ? 'edit_p_price' : 'new_p_price'}" value="${ep ? ep.price : ''}" required type="number" step="0.01" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Precio Versión FAN (Solo Camisetas)</label><input id="${ep ? 'edit_p_price_fan' : 'new_p_price_fan'}" value="${ep ? (ep.priceFan || '') : ''}" type="number" placeholder="Ej. 120000" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Precio Versión JUGADOR (Solo Camisetas)</label><input id="${ep ? 'edit_p_price_player' : 'new_p_price_player'}" value="${ep ? (ep.pricePlayer || '') : ''}" type="number" placeholder="Ej. 150000" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                
                 <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Stock</label><input id="${ep ? 'edit_p_stock' : 'new_p_stock'}" value="${ep ? ep.stock : ''}" required type="number" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                <div>
+                    <label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Estado / Etiqueta</label>
+                    <select id="${ep ? 'edit_p_status' : 'new_p_status'}" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
+                        <option value="Disponible" ${ep && ep.status === 'Disponible' ? 'selected' : ''}>Disponible</option>
+                        <option value="Agotado" ${ep && ep.status === 'Agotado' ? 'selected' : ''}>Agotado (Sin Stock)</option>
+                        <option value="Sobre Pedido" ${ep && ep.status === 'Sobre Pedido' ? 'selected' : ''}>Sobre Pedido</option>
+                        <option value="Nuevo Lanzamiento" ${ep && ep.status === 'Nuevo Lanzamiento' ? 'selected' : ''}>Nuevo Lanzamiento</option>
+                    </select>
+                </div>
                 
                 <div class="md:col-span-2">
                     <label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">URLs de Imágenes (Separadas por coma)</label>
@@ -195,11 +208,30 @@ export function renderAdminOrders() {
             <td class="p-4 font-bold text-white text-sm">${o.id}</td>
             <td class="p-4">
                 <span class="block text-white font-bold text-sm uppercase">${escapeHTML(o.customer.name)}</span>
-                <span class="text-xs text-gray-500 block mb-2">${escapeHTML(o.customer.email)}</span>
+                <span class="text-xs text-gray-500 block mb-2">${escapeHTML(o.customer.email)} | Cel: ${escapeHTML(o.customer.phone)}</span>
                 
-                <div class="text-[11px] text-gray-400 space-y-1 bg-[#111111] p-3 border border-gray-800 rounded mt-2">
+                <div class="text-[11px] text-gray-400 space-y-2 bg-[#111111] p-3 border border-gray-800 rounded mt-2">
                     ${o.items ? o.items.map(item => `
-                        <div>• ${escapeHTML(item.name)} <span class="text-gray-500">(${item.size}/${item.color})</span> x${item.quantity} - <span class="text-gray-300">${formatMoney(item.price)}</span></div>
+                        <div class="pb-2">
+                            • ${escapeHTML(item.name)} 
+                            <span class="text-gray-500">(${item.size}/${item.color})</span> x${item.quantity} - <span class="text-gray-300">${formatMoney(item.price)}</span>
+                            
+                            ${item.itemComment ? `
+                                <div class="text-yellow-500 font-medium text-[10px] mt-1.5 ml-3 pl-2 border-l-2 border-yellow-500">
+                                    Nota: ${escapeHTML(item.itemComment)}
+                                </div>
+                            ` : ''}
+
+                            ${item.customImage ? `
+                                <div class="mt-2 ml-3 p-2 bg-black border border-gray-800 rounded max-w-xs flex items-center space-x-3">
+                                    <img src="${item.customImage}" class="w-12 h-16 object-cover border border-gray-700 rounded bg-white">
+                                    <div>
+                                        <span class="text-[10px] text-gray-400 block font-bold">FOTO ADJUNTA</span>
+                                        <a href="${item.customImage}" target="_blank" class="text-white hover:underline text-[10px] font-medium"><i class="fas fa-external-link-alt mr-1"></i> Ver en grande</a>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
                     `).join('') : '<span class="text-gray-600">Sin detalles de artículos</span>'}
                 </div>
             </td>
@@ -243,7 +275,9 @@ export function renderAdminBanners() {
                 </div>
             </td>
             <td class="p-4 text-xs text-gray-400 font-bold uppercase tracking-wider">${escapeHTML(b.buttonText)}</td>
-            <td class="p-4 text-xs text-gray-400 truncate max-w-[100px]">${escapeHTML(b.productId)}</td>
+            <td class="p-4 text-xs text-gray-400 truncate max-w-[120px]">
+                ${b.type === 'custom' ? '<span class="text-purple-400 font-bold uppercase text-[10px]">Encargo Especial</span>' : escapeHTML(b.productId || 'Ninguno')}
+            </td>
             <td class="p-4 text-right space-x-3">
                 <button onclick="openEditBanner('${b.id}')" class="text-gray-500 hover:text-white transition-colors" title="Editar"><i class="fas fa-edit"></i></button>
                 <button onclick="deleteBanner('${b.id}')" class="text-gray-500 hover:text-white transition-colors" title="Eliminar"><i class="fas fa-trash"></i></button>
@@ -263,16 +297,26 @@ export function renderAdminBanners() {
         <div class="mb-8 bg-[#0a0a0a] p-8 border border-gray-800">
             <h2 class="text-lg font-black mb-6 text-white uppercase tracking-wide">${eb ? 'Editar Banner' : 'Nuevo Banner'}</h2>
             <form onsubmit="${eb ? 'saveEditBanner(event)' : 'saveNewBanner(event)'}" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Título Principal</label><input id="${eb ? 'edit_b_title' : 'new_b_title'}" value="${eb ? escapeHTML(eb.title) : ''}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm" placeholder="Ej. Nueva Colección"></div>
-                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Subtítulo</label><input id="${eb ? 'edit_b_sub' : 'new_b_sub'}" value="${eb ? escapeHTML(eb.subtitle) : ''}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm" placeholder="Ej. Perfecta para apoyar a tu equipo"></div>
-                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Texto del Botón</label><input id="${eb ? 'edit_b_btn' : 'new_b_btn'}" value="${eb ? escapeHTML(eb.buttonText) : 'Descubrir Más'}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Título Principal</label><input id="${eb ? 'edit_b_title' : 'new_b_title'}" value="${eb ? escapeHTML(eb.title) : ''}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm" placeholder="Ej. ¿No encuentras la camiseta?"></div>
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Subtítulo</label><input id="${eb ? 'edit_b_sub' : 'new_b_sub'}" value="${eb ? escapeHTML(eb.subtitle) : ''}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm" placeholder="Ej. Sube una imagen..."></div>
+                <div><label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Texto del Botón</label><input id="${eb ? 'edit_b_btn' : 'new_b_btn'}" value="${eb ? escapeHTML(eb.buttonText) : 'Subir Imagen'}" required type="text" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm"></div>
+                
                 <div>
+                    <label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Acción al hacer clic</label>
+                    <select id="${eb ? 'edit_b_type' : 'new_b_type'}" onchange="toggleBannerTypeFields(this.value, '${eb ? 'edit' : 'new'}')" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
+                        <option value="product" ${eb && eb.type !== 'custom' ? 'selected' : ''}>Enlazar a un Producto</option>
+                        <option value="custom" ${eb && eb.type === 'custom' ? 'selected' : ''}>Formulario "Camiseta No Encontrada"</option>
+                    </select>
+                </div>
+
+                <div id="${eb ? 'edit_b_prod_container' : 'new_b_prod_container'}" class="md:col-span-2" style="display: ${eb && eb.type === 'custom' ? 'none' : 'block'}">
                     <label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Enlazar al Producto</label>
-                    <select id="${eb ? 'edit_b_prod' : 'new_b_prod'}" required class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
+                    <select id="${eb ? 'edit_b_prod' : 'new_b_prod'}" class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
                         <option value="">Selecciona un producto...</option>
                         ${productOptions}
                     </select>
                 </div>
+
                 <div class="md:col-span-2">
                     <label class="block text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">URL de la Imagen de Fondo</label>
                     <input id="${eb ? 'edit_b_img' : 'new_b_img'}" value="${eb ? escapeHTML(eb.image) : ''}" required type="url" placeholder="https://..." class="w-full p-3 bg-[#1a1a1a] border border-gray-800 text-white focus:border-white outline-none text-sm">
@@ -301,7 +345,7 @@ export function renderAdminBanners() {
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm">
                     <thead class="bg-[#1a1a1a] text-gray-400 uppercase text-xs font-bold tracking-wider border-b border-gray-800">
-                        <tr><th class="p-4">Banner</th><th class="p-4">Botón</th><th class="p-4">ID Producto</th><th class="p-4 text-right">Acción</th></tr>
+                        <tr><th class="p-4">Banner</th><th class="p-4">Botón</th><th class="p-4">Destino / Acción</th><th class="p-4 text-right">Acción</th></tr>
                     </thead>
                     <tbody>${html.length > 0 ? html : '<tr><td colspan="4" class="p-8 text-center text-gray-500 uppercase tracking-wider text-xs">Sin banners configurados</td></tr>'}</tbody>
                 </table>

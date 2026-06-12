@@ -4,7 +4,7 @@ export const state = {
     products: [],
     orders: [],
     cart: [],
-    categories: ['Todas', 'Playeras', 'Shorts', 'Pants', 'Accesorios', 'Sudaderas'],
+    categories: ['Todas', 'Camisetas',],
     selectedVariant: { size: null, color: null },
     isHomeView: true,
     promoBanners: [],

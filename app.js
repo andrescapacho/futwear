@@ -65,6 +65,112 @@ function toggleAdminMenu() {
     render();
 }
 
+function toggleBannerTypeFields(value, prefix) {
+    const container = document.getElementById(`${prefix}_b_prod_container`);
+    if(container) {
+        container.style.display = value === 'custom' ? 'none' : 'block';
+    }
+}
+window.toggleBannerTypeFields = toggleBannerTypeFields;
+
+function showCustomRequestModal() {
+    const modal = document.getElementById('custom-request-modal');
+    if(modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+function closeCustomRequestModal() {
+    const modal = document.getElementById('custom-request-modal');
+    if(modal) {
+        modal.classList.remove('flex');
+        modal.classList.add('hidden');
+    }
+}
+window.showCustomRequestModal = showCustomRequestModal;
+window.closeCustomRequestModal = closeCustomRequestModal;
+
+async function submitCustomRequest(event) {
+    event.preventDefault();
+    const btnSubmit = event.target.querySelector('button[type="submit"]');
+    const originalText = btnSubmit.innerText;
+    btnSubmit.innerText = "ENVIANDO...";
+    btnSubmit.disabled = true;
+
+    const fileInput = document.getElementById('req_file');
+    let base64Image = '';
+
+    if (fileInput.files && fileInput.files[0]) {
+        const file = fileInput.files[0];
+        
+        // Firestore limita los documentos a 1MB. Protegemos bloqueando archivos pesados.
+        if (file.size > 850000) { 
+            showToast('La foto es muy pesada. Sube una de menor resolución (Máx. 800 KB).', 'error');
+            btnSubmit.innerText = originalText;
+            btnSubmit.disabled = false;
+            return;
+        }
+
+        base64Image = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Capturamos el comentario
+    const reqComment = document.getElementById('req_comment').value; 
+
+    // Declaramos el cliente UNA SOLA VEZ
+    const customer = {
+        name: document.getElementById('req_name').value,
+        email: document.getElementById('req_email').value,
+        phone: document.getElementById('req_phone').value,
+        address: 'Búsqueda Especial (Desde Banner Principal)'
+    };
+
+    const items = [{
+        id: 'ENCARGO-ESP',
+        name: '🔍 SOLICITUD: CAMISETA NO ENCONTRADA EN CATÁLOGO',
+        price: 0,
+        quantity: 1,
+        size: 'Por definir',
+        color: 'Por definir',
+        customImage: base64Image,
+        itemComment: reqComment // Guardamos la nota del cliente
+    }];
+
+    const newOrder = {
+        id: generateId('REQ'), // REQ para diferenciar de Orden común (ORD)
+        customer,
+        items,
+        total: 0,
+        status: 'Pendiente',
+        date: new Date().toISOString()
+    };
+
+    try {
+        await addDoc(collection(db, "orders"), newOrder);
+        closeCustomRequestModal();
+        showToast('Solicitud enviada con éxito. Revisaremos la foto.', 'success');
+        event.target.reset();
+    } catch (error) {
+        console.error("Error enviando encargo:", error);
+        showToast('Hubo un error al enviar.', 'error');
+    } finally {
+        btnSubmit.innerText = originalText;
+        btnSubmit.disabled = false;
+    }
+}
+
+window.submitCustomRequest = submitCustomRequest;
+
+function updateCustomizationField(field, value, isCheckbox = false) {
+    state.selectedVariant[field] = isCheckbox ? value.checked : value.value;
+    render(); // Forzamos el re-render para calcular precios y mostrar campos condicionales
+}
+window.updateCustomizationField = updateCustomizationField;
+
 function navigateTo(view, dataId = null, pushToHistory = true) {
     // 1. Guardamos el scroll exacto si salimos de la tienda para ver un producto
     if (state.currentView === 'shop' && view === 'product_detail') {
@@ -83,7 +189,17 @@ function navigateTo(view, dataId = null, pushToHistory = true) {
     
     if (dataId) {
         state.selectedProduct = state.products.find(p => p.id === dataId);
-        state.selectedVariant = { size: null, color: null }; 
+        // Inicializamos las variantes vacías y las opciones de personalización por defecto
+        state.selectedVariant = { 
+            size: null, 
+            color: null,
+            version: 'Fan', // Versión inicial
+            customNameActive: false,
+            customName: '',
+            customNumber: '',
+            patchActive: false,
+            patchDetails: ''
+        }; 
     }
     
     if (state.isAdminAuth && view.startsWith('admin_')) {
@@ -121,6 +237,22 @@ function goHome() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
         navigateTo('shop');
+    }
+}
+
+function showQRModal() {
+    const modal = document.getElementById('qr-modal');
+    if(modal) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+
+function closeQRModal() {
+    const modal = document.getElementById('qr-modal');
+    if(modal) {
+        modal.classList.remove('flex');
+        modal.classList.add('hidden');
     }
 }
 
@@ -167,45 +299,99 @@ function addToCart(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) return;
 
-    // 1. Validaciones obligatorias
+    // 1. Validaciones básicas obligatorias
     if (!state.selectedVariant.size) {
         showToast('Por favor, selecciona una talla antes de agregar al carrito.', 'error');
         return;
     }
-    if (!state.selectedVariant.color) {
+    
+    // MODIFICADO: Solo exige color si el producto REALMENTE tiene opciones de color configuradas
+    const hasColorOptions = product.colors && product.colors.length > 0;
+    if (hasColorOptions && !state.selectedVariant.color) {
         showToast('Por favor, selecciona un color antes de agregar al carrito.', 'error');
         return;
     }
 
-    // 2. Buscamos si EXACTAMENTE el mismo producto (con la misma talla y color) ya está en el carrito
+    // Si no maneja colores, le asignamos la palabra 'Único' para que se registre limpio en el carrito
+    const chosenColor = hasColorOptions ? state.selectedVariant.color : 'Único';
+
+    // 2. Validaciones Condicionales de Personalización
+    if (product.category === 'Camisetas' && state.selectedVariant.customNameActive) {
+        if (!state.selectedVariant.customName.trim() || !state.selectedVariant.customNumber.trim()) {
+            showToast('Por favor, ingresa el Nombre y Número obligatorios para la personalización.', 'error');
+            return;
+        }
+    }
+    if (product.category === 'Camisetas' && state.selectedVariant.patchActive) {
+        if (!state.selectedVariant.patchDetails.trim()) {
+            showToast('Por favor, específica qué parche deseas en tu camiseta.', 'error');
+            return;
+        }
+    }
+
+    // 3. Cálculo de precio dinámico final con complementos
+    let finalPrice = product.price;
+    if (product.category === 'Camisetas') {
+        finalPrice = state.selectedVariant.version === 'Jugador' 
+            ? (product.pricePlayer || product.price) 
+            : (product.priceFan || product.price);
+    }
+
+    let customDetailsSummary = [];
+    if (product.category === 'Camisetas') {
+        customDetailsSummary.push(`Versión: ${state.selectedVariant.version}`);
+        
+        if (state.selectedVariant.customNameActive) {
+            finalPrice += 12000;
+            customDetailsSummary.push(`Estampado: ${state.selectedVariant.customName.toUpperCase()} (${state.selectedVariant.customNumber})`);
+        }
+        if (state.selectedVariant.patchActive) {
+            finalPrice += 4000;
+            customDetailsSummary.push(`Parche: ${state.selectedVariant.patchDetails.toUpperCase()}`);
+        }
+    }
+
+    const sizeUpper = state.selectedVariant.size.toUpperCase().trim();
+    if (['2XL', '3XL', 'XXL', 'XXXL'].includes(sizeUpper)) {
+        finalPrice += 4000;
+        customDetailsSummary.push(`Recargo Talla Especial (${sizeUpper})`);
+    }
+
+    const customizedProduct = {
+        ...product,
+        calculatedPrice: finalPrice, 
+        customSummary: customDetailsSummary.join(' | ')
+    };
+
+    // 4. Buscar duplicados usando chosenColor
     const existingItemIndex = state.cart.findIndex(item => 
         item.product.id === product.id && 
         item.size === state.selectedVariant.size && 
-        item.color === state.selectedVariant.color
+        item.color === chosenColor &&
+        item.customSummary === customizedProduct.customSummary
     );
 
     if (existingItemIndex !== -1) {
-        // Si ya existe, aumentamos la cantidad validando el stock
         if (state.cart[existingItemIndex].quantity < product.stock) {
             state.cart[existingItemIndex].quantity += 1;
             saveCart();
             showToast('Cantidad actualizada en el carrito', 'success');
-            render(); // Actualizamos la vista (burbuja del navbar)
+            render();
         } else {
             showToast('Límite de stock alcanzado para este producto.', 'error');
         }
     } else {
-        // Si no existe, lo agregamos como un item nuevo
         if (product.stock > 0) {
             state.cart.push({
-                product: product,
+                product: customizedProduct,
                 size: state.selectedVariant.size,
-                color: state.selectedVariant.color,
-                quantity: 1
+                color: chosenColor, // Guardamos 'Único' o el color real
+                quantity: 1,
+                customSummary: customizedProduct.customSummary 
             });
             saveCart();
             showToast('Producto agregado al carrito', 'success');
-            render(); // Actualizamos la vista (burbuja del navbar)
+            render();
         } else {
             showToast('Este producto se encuentra agotado.', 'error');
         }
@@ -235,7 +421,8 @@ async function placeOrder(event) {
     btnSubmit.innerText = "PROCESANDO...";
     btnSubmit.disabled = true;
 
-    const total = state.cart.reduce((sum, item) => sum + ((item.product.salePrice || item.product.price) * item.quantity), 0);
+    // CORREGIDO: Sumamos usando prioritariamente calculatedPrice para incluir las personalizaciones en el cobro definitivo
+    const total = state.cart.reduce((sum, item) => sum + ((item.product.calculatedPrice || item.product.salePrice || item.product.price) * item.quantity), 0);
     const customer = {
         name: document.getElementById('c_name').value,
         email: document.getElementById('c_email').value,
@@ -245,8 +432,8 @@ async function placeOrder(event) {
     
     const items = state.cart.map(item => ({
         id: item.product.id,
-        name: item.product.name,
-        price: item.product.salePrice || item.product.price,
+        name: item.customSummary ? `${item.product.name} (${item.customSummary})` : item.product.name, // El administrador verá la personalización directo en el nombre del item
+        price: item.product.calculatedPrice || item.product.salePrice || item.product.price,
         quantity: item.quantity,
         size: item.size,
         color: item.color
@@ -383,15 +570,16 @@ async function saveNewProduct(event) {
         category: document.getElementById('new_p_cat').value,
         brand: document.getElementById('new_p_brand').value,
         price: parseFloat(document.getElementById('new_p_price').value),
+        priceFan: parseFloat(document.getElementById('new_p_price_fan').value) || null, // <- NUEVO
+        pricePlayer: parseFloat(document.getElementById('new_p_price_player').value) || null, // <- NUEVO
         salePrice: null,
         stock: newStock,
-        status: newStock > 0 ? 'Disponible' : 'Agotado',
-        image: mainImage,          // Mantiene compatibilidad con el catálogo
-        images: imagesArray,       // Guarda toda la galería
+        status: document.getElementById('new_p_status').value,
+        image: mainImage,
+        images: imagesArray,
         sizes: sizes,
         colors: colors
     };
-
     try {
         await addDoc(collection(db, "products"), newProduct);
         state.showProductForm = false;
@@ -419,12 +607,14 @@ async function saveNewBanner(event) {
     btnSubmit.innerText = "GUARDANDO...";
     btnSubmit.disabled = true;
 
+    const bannerType = document.getElementById('new_b_type').value;
     const newBanner = {
         title: document.getElementById('new_b_title').value,
         subtitle: document.getElementById('new_b_sub').value,
         buttonText: document.getElementById('new_b_btn').value,
         image: document.getElementById('new_b_img').value,
-        productId: document.getElementById('new_b_prod').value
+        type: bannerType,
+        productId: bannerType === 'custom' ? '' : document.getElementById('new_b_prod').value
     };
 
     try {
@@ -456,12 +646,14 @@ async function saveEditBanner(event) {
     btnSubmit.innerText = "GUARDANDO...";
     btnSubmit.disabled = true;
 
+    const bannerType = document.getElementById('edit_b_type').value;
     const updatedBanner = {
         title: document.getElementById('edit_b_title').value,
         subtitle: document.getElementById('edit_b_sub').value,
         buttonText: document.getElementById('edit_b_btn').value,
         image: document.getElementById('edit_b_img').value,
-        productId: document.getElementById('edit_b_prod').value
+        type: bannerType,
+        productId: bannerType === 'custom' ? '' : document.getElementById('edit_b_prod').value
     };
 
     try {
@@ -542,8 +734,10 @@ async function saveEditProduct(event) {
         category: document.getElementById('edit_p_cat').value,
         brand: document.getElementById('edit_p_brand').value,
         price: parseFloat(document.getElementById('edit_p_price').value),
+        priceFan: parseFloat(document.getElementById('edit_p_price_fan').value) || null, // <- NUEVO
+        pricePlayer: parseFloat(document.getElementById('edit_p_price_player').value) || null, // <- NUEVO
         stock: newStock,
-        status: newStock > 0 ? 'Disponible' : 'Agotado',
+        status: document.getElementById('edit_p_status').value,
         image: mainImage,
         images: imagesArray,
         sizes: sizes,
@@ -623,10 +817,10 @@ function renderNavbar() {
     <div class="bg-[#050505] border-b border-gray-800 text-gray-400 text-[10px] sm:text-xs py-2 hidden md:block">
         <div class="max-w-7xl mx-auto px-4 flex justify-between items-center">
             <div class="flex space-x-6">
-                <span><i class="fas fa-truck mr-1"></i> Envío contra entrega todo Colombia</span>
+                <span><i class="fas fa-truck mr-1"></i> Envío a toda Colombia</span>
                 <span><i class="fas fa-undo mr-1"></i> Cambios fáciles y rápidos</span>
                 <span><i class="fas fa-credit-card mr-1"></i> Pagos 100% seguros</span>
-                <span><i class="fas fa-undo mr-1"></i> Soporte 24/7</span>
+                <span><i class="fas fa-check mr-1"></i> Calidad Garantizada</span>
             </div>
             <div>
                 <span>Colombia | COP <i class="fas fa-chevron-down ml-1"></i></span>
@@ -639,16 +833,8 @@ function renderNavbar() {
             <div class="flex justify-between items-center h-20">
                 
                 <div class="flex items-center cursor-pointer" onclick="goHome()">
-                    <img src="./logos/logo.png" alt="FutWear Logo" class="h-8 md:h-8 object-contain">
+                    <img src="./logos/logo.png" alt="FutWear Logo" class="h-5 md:h-8 object-contain">
                 </div>
-
-                <nav class="hidden lg:flex space-x-8 text-sm font-bold tracking-wide">
-                    <button onclick="selectCategoryFilter('Todas'); state.searchTerm=''; navigateTo('shop')" class="hover:text-gray-400 transition-colors">HOMBRE</button>
-                    <button onclick="showToast('Colección de mujer próximamente', 'success')" class="hover:text-gray-400 transition-colors">MUJER</button>
-                    <button onclick="selectCategoryFilter('Accesorios'); state.searchTerm=''; navigateTo('shop')" class="hover:text-gray-400 transition-colors">ACCESORIOS</button>
-                    <button onclick="showToast('Zona de ofertas en construcción', 'success')" class="hover:text-gray-400 transition-colors">OFERTAS</button>
-                    <button onclick="showToast('Nuevos lanzamientos muy pronto', 'success')" class="hover:text-gray-400 transition-colors">NUEVOS</button>
-                </nav>
 
                 <div class="flex items-center space-x-4">
                     <div class="hidden md:block relative">
@@ -683,7 +869,7 @@ export function renderFooter() {
         <div class="max-w-7xl mx-auto px-4 grid grid-cols-1 md:grid-cols-5 gap-12 mb-12">
             <div class="md:col-span-2">
                 <div class="flex items-center mb-6">
-                    <img src="./logos/logo.png" alt="FutWear Logo" class="h-10 md:h-8 object-contain">
+                    <img src="./logos/logo.png" alt="FutWear Logo" class="h-6 md:h-8 object-contain">
                 </div>
                 <p class="text-gray-400 mb-6 max-w-xs">Ropa deportiva diseñada para el rendimiento, creada para inspirar tu mejor versión.</p>
                 <div class="flex space-x-4">
@@ -741,44 +927,110 @@ function renderCart() {
         </div>
         ${renderFooter()}`;
 
-    let subtotal = state.cart.reduce((sum, item) => sum + ((item.product.salePrice || item.product.price) * item.quantity), 0);
-    let html = state.cart.map((item, idx) => `
-        <div class="flex items-center bg-[#0a0a0a] p-4 border border-gray-800 mb-4 relative">
-            <button onclick="removeFromCart(${idx})" class="absolute top-4 right-4 text-gray-600 hover:text-white transition-colors"><i class="fas fa-times"></i></button>
-            <div class="w-20 h-24 bg-[#e5e5e5] p-2 flex items-center justify-center mr-4">
-                <img src="${escapeHTML(item.product.image)}" class="w-full h-full object-cover mix-blend-multiply">
+    let totalBaseProducts = 0;
+    let totalExtras = 0;
+    let extrasListHtml = '';
+
+    let html = state.cart.map((item, idx) => {
+        // 1. Calculamos el valor base
+        let version = 'Fan';
+        if (item.customSummary && item.customSummary.includes('Versión: Jugador')) {
+            version = 'Jugador';
+        }
+        
+        let itemBasePrice = item.product.price;
+        if (item.product.category === 'Camisetas') {
+            itemBasePrice = version === 'Jugador' ? (item.product.pricePlayer || item.product.price) : (item.product.priceFan || item.product.price);
+        }
+        
+        totalBaseProducts += itemBasePrice * item.quantity;
+        let itemExtras = (item.product.calculatedPrice - itemBasePrice) * item.quantity;
+        totalExtras += itemExtras;
+
+        // 2. Traductor de Extras: Leemos el resumen y creamos un desglose específico
+        if (itemExtras > 0 && item.customSummary) {
+            const parts = item.customSummary.split(' | ');
+            
+            parts.forEach(part => {
+                if (part.startsWith('Estampado:')) {
+                    extrasListHtml += `
+                        <div class="flex justify-between text-gray-400 text-xs pl-2 mb-1.5 font-medium">
+                            <span>• Nombre y dorsal ${item.quantity > 1 ? `(x${item.quantity})` : ''}</span>
+                            <span class="text-white">${formatMoney(12000 * item.quantity)}</span>
+                        </div>
+                    `;
+                }
+                if (part.startsWith('Parche:')) {
+                    // Extraemos el nombre del parche que escribió el cliente
+                    const nombreParche = part.replace('Parche: ', '').toLowerCase();
+                    extrasListHtml += `
+                        <div class="flex justify-between text-gray-400 text-xs pl-2 mb-1.5 font-medium">
+                            <span class="capitalize">• Parche ${escapeHTML(nombreParche)} ${item.quantity > 1 ? `(x${item.quantity})` : ''}</span>
+                            <span class="text-white">${formatMoney(4000 * item.quantity)}</span>
+                        </div>
+                    `;
+                }
+                if (part.startsWith('Recargo Talla Especial')) {
+                    extrasListHtml += `
+                        <div class="flex justify-between text-gray-400 text-xs pl-2 mb-1.5 font-medium">
+                            <span>• Talla Especial (${item.size}) ${item.quantity > 1 ? `(x${item.quantity})` : ''}</span>
+                            <span class="text-white">${formatMoney(4000 * item.quantity)}</span>
+                        </div>
+                    `;
+                }
+            });
+        }
+
+        return `
+            <div class="flex items-center bg-[#0a0a0a] p-4 border border-gray-800 mb-4 relative">
+                <button onclick="removeFromCart(${idx})" class="absolute top-4 right-4 text-gray-600 hover:text-white transition-colors"><i class="fas fa-times"></i></button>
+                <div class="w-20 h-24 bg-[#e5e5e5] p-2 flex items-center justify-center mr-4">
+                    <img src="${escapeHTML(item.product.image)}" class="w-full h-full object-cover mix-blend-multiply">
+                </div>
+                <div class="flex-grow pr-4">
+                    <h3 class="font-bold text-white text-sm uppercase">${escapeHTML(item.product.name)}</h3>
+                    <p class="text-xs text-gray-400 mt-1 uppercase tracking-wider">Talla: <span class="text-white">${item.size}</span> | Color: <span class="text-white">${item.color}</span></p>
+                    <span class="text-white font-bold block mt-2 text-sm">${formatMoney(item.product.calculatedPrice || item.product.salePrice || item.product.price)}</span>
+                    ${item.customSummary ? `<p class="text-[11px] text-gray-500 italic mt-0.5">${escapeHTML(item.customSummary)}</p>` : ''}
+                </div>
+                <div class="flex items-center border border-gray-700 mr-8 bg-black">
+                    <button onclick="updateCartQuantity(${idx}, -1)" class="px-3 py-1 text-gray-400 hover:text-white transition-colors">-</button>
+                    <span class="px-3 font-bold text-white py-1 border-x border-gray-700 text-sm">${item.quantity}</span>
+                    <button onclick="updateCartQuantity(${idx}, 1)" class="px-3 py-1 text-gray-400 hover:text-white transition-colors">+</button>
+                </div>
             </div>
-            <div class="flex-grow pr-4">
-                <h3 class="font-bold text-white text-sm uppercase">${escapeHTML(item.product.name)}</h3>
-                <p class="text-xs text-gray-400 mt-1 uppercase tracking-wider">Talla: <span class="text-white">${item.size}</span> | Color: <span class="text-white">${item.color}</span></p>
-                <span class="text-white font-bold block mt-2 text-sm">${formatMoney(item.product.salePrice || item.product.price)}</span>
-            </div>
-            <div class="flex items-center border border-gray-700 mr-8 bg-black">
-                <button onclick="updateCartQuantity(${idx}, -1)" class="px-3 py-1 text-gray-400 hover:text-white transition-colors">-</button>
-                <span class="px-3 font-bold text-white py-1 border-x border-gray-700 text-sm">${item.quantity}</span>
-                <button onclick="updateCartQuantity(${idx}, 1)" class="px-3 py-1 text-gray-400 hover:text-white transition-colors">+</button>
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
+
+    let totalFinal = totalBaseProducts + totalExtras;
 
     return `
     <div class="max-w-5xl mx-auto px-4 py-12 min-h-[60vh]">
         <h1 class="text-2xl font-black mb-8 text-white uppercase tracking-wide">Tu Carrito</h1>
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div class="lg:col-span-2">${html}</div>
+            
             <div class="bg-[#0a0a0a] p-6 border border-gray-800 h-fit sticky top-24">
                 <h2 class="text-lg font-bold mb-4 border-b border-gray-800 pb-4 text-white uppercase tracking-wider">Resumen</h2>
                 <div class="flex justify-between text-gray-400 mb-2 text-sm">
-                    <span>Subtotal</span>
-                    <span>${formatMoney(subtotal)}</span>
+                    <span>Valor Base Camisetas</span>
+                    <span class="text-white">${formatMoney(totalBaseProducts)}</span>
                 </div>
-                <div class="flex justify-between text-gray-400 mb-4 text-sm">
+                
+                ${totalExtras > 0 ? `
+                <div class="border-t border-gray-900 pt-3 pb-1 mt-3">
+                    <span class="text-white text-[10px] font-bold uppercase tracking-widest block mb-3">Detalle de Adicionales:</span>
+                    ${extrasListHtml}
+                </div>
+                ` : ''}
+
+                <div class="flex justify-between text-gray-400 mb-4 text-sm border-t border-gray-900 pt-4 mt-2">
                     <span>Envío</span>
                     <span class="text-white font-bold uppercase">Gratis</span>
                 </div>
                 <div class="flex justify-between font-black text-lg mb-6 pt-4 border-t border-gray-800 text-white">
                     <span>TOTAL</span>
-                    <span>${formatMoney(subtotal)}</span>
+                    <span>${formatMoney(totalFinal)}</span>
                 </div>
                 <button onclick="navigateTo('checkout')" class="w-full bg-white text-black py-4 font-bold text-sm uppercase tracking-wider hover:bg-gray-200 transition-colors">Finalizar Compra</button>
             </div>
@@ -821,12 +1073,28 @@ function renderCheckout() {
 }
 
 function renderOrderSuccess() {
-    const order = window.lastOrder;
-    // Si alguien entra a esta vista por error sin tener un pedido, lo regresamos a la tienda
+    const order = state.orders ? state.orders.find(o => o.id === window.lastOrder?.id) || window.lastOrder : window.lastOrder;
+    
     if(!order) {
         setTimeout(() => navigateTo('shop'), 100);
         return ''; 
     }
+
+    // Modal oculto del QR
+    const qrModalHtml = `
+    <div id="qr-modal" class="fixed inset-0 bg-black/90 z-[100] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity">
+        <div class="bg-[#0a0a0a] p-8 border border-gray-800 max-w-sm w-full relative flex flex-col items-center shadow-2xl">
+            <button onclick="closeQRModal()" class="absolute top-4 right-4 text-gray-500 hover:text-white text-2xl focus:outline-none">&times;</button>
+            <h3 class="text-white font-black uppercase tracking-wider mb-6 text-center text-lg">Escanea para pagar</h3>
+            
+            <div class="bg-white p-4 w-48 h-48 mb-6 flex items-center justify-center">
+                <img src="" alt="QR Bancolombia/Nequi" class="w-full h-full object-contain">
+            </div>
+            
+            <p class="text-xs text-gray-400 text-center leading-relaxed">Referencia: <span class="text-white font-bold">${order.id}</span><br>Monto: <span class="text-white font-bold">${formatMoney(order.total)}</span></p>
+            <button onclick="closeQRModal()" class="mt-8 w-full border border-gray-600 text-white hover:bg-white hover:text-black py-3 text-xs font-bold uppercase tracking-wider transition-colors">Cerrar Ventana</button>
+        </div>
+    </div>`;
 
     return `
     <div class="max-w-3xl mx-auto px-4 py-16 min-h-[60vh] flex flex-col items-center">
@@ -843,6 +1111,16 @@ function renderOrderSuccess() {
 
             <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Métodos de Pago Disponibles</h3>
             <div class="space-y-4">
+
+                <div onclick="showQRModal()" class="bg-[#1a1a1a] p-4 border border-gray-800 flex items-start space-x-4 cursor-pointer hover:border-white transition-colors group">
+                    <i class="fas fa-qrcode text-2xl text-white mt-1 group-hover:scale-110 transition-transform"></i>
+                    <div>
+                        <h4 class="text-white font-bold text-sm uppercase tracking-wider">Pago con Código QR</h4>
+                        <p class="text-xs text-gray-400 mt-2 leading-relaxed">
+                            Haz clic aquí para ver nuestra imagen de código QR y realizar tu pago en segundos de forma segura.
+                        </p>
+                    </div>
+                </div>
                 
                 <div class="bg-[#1a1a1a] p-4 border border-gray-800 flex items-start space-x-4">
                     <i class="fas fa-university text-2xl text-white mt-1"></i>
@@ -860,17 +1138,7 @@ function renderOrderSuccess() {
                     <div>
                         <h4 class="text-white font-bold text-sm uppercase tracking-wider">Transferencia Nequi</h4>
                         <p class="text-xs text-gray-400 mt-2">Envía tu pago a nuestro número oficial:</p>
-                        <span class="text-white font-black text-lg tracking-widest mt-1 block">300 123 4567</span>
-                    </div>
-                </div>
-
-                <div class="bg-[#1a1a1a] p-4 border border-gray-800 flex items-start space-x-4">
-                    <i class="fas fa-qrcode text-2xl text-white mt-1"></i>
-                    <div>
-                        <h4 class="text-white font-bold text-sm uppercase tracking-wider">Pago con Código QR</h4>
-                        <p class="text-xs text-gray-400 mt-2 leading-relaxed">
-                            Solicita nuestra imagen de código QR oficial de Bancolombia/Nequi a través de WhatsApp para realizar tu pago en segundos de forma segura.
-                        </p>
+                        <span class="text-white font-black text-lg tracking-widest mt-1 block">3172305147</span>
                     </div>
                 </div>
 
@@ -885,6 +1153,8 @@ function renderOrderSuccess() {
             Volver a la Tienda
         </button>
     </div>
+    
+    ${qrModalHtml}
     ${renderFooter()}`;
 }
 
@@ -916,6 +1186,7 @@ window.addEventListener('popstate', (event) => {
 });
 
 // --- EXPORTAR AL WINDOW ---
+window.state = state;
 window.navigateTo = navigateTo;
 window.addToCart = addToCart;
 window.removeFromCart = removeFromCart;
@@ -942,3 +1213,5 @@ window.openEditBanner = openEditBanner;
 window.saveEditBanner = saveEditBanner;
 window.deleteBanner = deleteBanner;
 window.goHome = goHome;
+window.showQRModal = showQRModal;
+window.closeQRModal = closeQRModal;
